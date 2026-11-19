@@ -1,111 +1,85 @@
 #!/usr/bin/env python3
 """Play Dino Run in real Fuse (fuse-sdl, 48K, the OpticOS ROM) and take the
-screenshots. Fuse runs slowed down (--speed) so a pilot can keep up. It reads
-the obstacles from the Fuse window's pixels only, and presses SPACE or A
-through xdotool, as a player would. The tape loads with the tape traps on.
-Usage: fuse_play.py [speed]   (shots go to ../shots)"""
+screenshots. Fuse runs slowed down (--speed) so the pilot (tools/pilot.py) can
+keep up; it sees only the Fuse window's pixels and presses SPACE or A through
+xdotool, as a player would. The tape loads with the tape traps on.
+Usage: fuse_play.py [speed] [games]   (shots go to ../shots/fuse_*.png)"""
 import sys, os, time
 HERE = os.path.dirname(os.path.abspath(__file__)); DR = os.path.dirname(HERE)
 os.environ.setdefault('OPTICOS_REPO', os.environ.get('OPTICOS', '/workspace/opticos-repo'))
 sys.path.insert(0, os.environ.get('HAPPYBAT_TOOLS', '/workspace/happybat/tools'))   # Fuse helpers from the Happy Bat repo
-from fuse_common import *            # Fuse wrapper, grab, load, down/up (from Happy Bat)
-import fuse_phase1
+sys.path.insert(0, HERE)
+from fuse_common import *            # Fuse wrapper, grab, load, down/up
+import fuse_phase1, pilot
 from paths import ROM
 TAPE = os.path.join(DR, 'dino.tap'); OUT = os.path.join(DR, 'shots')
-SPEED = int(sys.argv[1]) if len(sys.argv) > 1 else 25
+SPEED = int(sys.argv[1]) if len(sys.argv) > 1 else 20
+GAMES = int(sys.argv[2]) if len(sys.argv) > 2 else 3
 BX, BY = 32, 24                      # display origin in the Fuse window
-GROUND = 56 + 82                     # screen line of the ground line
-def ink(p, X, Y): return sum(p(X, Y)) < 200
+FR = 0.02 * 100 / SPEED              # real seconds per Spectrum frame
 def px(im):
     w = im.load(); return lambda X, Y: w[BX + X, BY + Y]
-def obstacles(p):
-    """black groups right of the dino over the play strip -> [left, right, top, bottom]"""
-    cols = {}
-    for X in range(44, 256):
-        ys = [Y for Y in range(96, GROUND - 1) if ink(p, X, Y)]
-        if ys: cols[X] = (min(ys), max(ys))
-    gs = []
-    for X in sorted(cols):
-        if gs and X - gs[-1][1] <= 3:
-            g = gs[-1]; gs[-1] = [g[0], X, min(g[2], cols[X][0]), max(g[3], cols[X][1])]
-        else: gs.append([X, X, cols[X][0], cols[X][1]])
-    return [g for g in gs if g[3] >= 104]   # clouds stay higher
-def game_over(p): return any(ink(p, X, Y) for X in range(92, 160) for Y in range(72, 80))
-def title(p): return any(ink(p, X, Y) for X in range(0, 120) for Y in range(160, 168))
-
+def black(p, X, Y): return sum(p(X, Y)) < 200
 _orig = fuse_phase1.subprocess.Popen
 def popen(args, **kw):
     if args and args[0] == 'fuse-sdl': args = args + ['--speed', str(SPEED)]
     return _orig(args, **kw)
 fuse_phase1.subprocess.Popen = popen
+def press(k, frames): down(k); time.sleep(FR * frames); up(k)
+def save(im, name): im.save(os.path.join(OUT, name)); print('  shot', name)
+
 kill(); f = Fuse(ROM, TAPE, traps=True)
 time.sleep(3 * 100 / SPEED + 2)      # NEW is a cold start: let it boot
 load(f, True, hold=0.12 * 100 / SPEED)
 t0 = time.time()
-while time.time() - t0 < 400:
+while time.time() - t0 < 600:        # the title: "Press SPACE to start" and the copyright line
     time.sleep(1); p = px(grab(f))
-    if title(p): break
+    if any(black(p, X, 164) for X in range(88, 170)) and any(black(p, X, 188) for X in range(60, 190)): break
 print('title after %.0f s' % (time.time() - t0))
-time.sleep(2 * 100 / SPEED); grab(f).save(os.path.join(OUT, 'fuse_title.png'))
-FR = 0.02 * 100 / SPEED              # real seconds per frame
-def press(k, frames): down(k); time.sleep(FR * frames); up(k)
-saved = set(); results = []; DBG = []
-for attempt in range(1, 6):
-    press('space', 10); time.sleep(FR * 30)
-    t1 = time.time(); jumps = 0; ducking = False; held = None; holdfor = 0; last = 0
-    passed = 0; prevx = None; speed_px = 7.2
-    steer = True
-    while time.time() - t1 < 900:
-        now = time.time(); im = grab(f); p = px(im)
-        if game_over(p): break
-        if {'jump', 'bird'} <= saved and passed >= 25: steer = False   # let it crash
-        if not steer:
-            if held: up('space'); held = None
-            if ducking: up('a'); ducking = False
-            time.sleep(0.01); continue
-        gs = obstacles(p); ahead = [g for g in gs if g[0] > 47]; nxt = ahead[0] if ahead else None
-        if held and now - held > holdfor: up('space'); held = None
-        if nxt and prevx is not None and nxt[0] > prevx[0] + 30: passed += 1
-        elif nxt and prevx is not None and now > prevx[1] and nxt[0] < prevx[0]:
-            v = (prevx[0] - nxt[0]) / (now - prevx[1]) * FR * 2         # px per step
-            if 4 < v < 20: speed_px = 0.8 * speed_px + 0.2 * v
-        prevx = (nxt[0], now) if nxt else None
-        lead = 38 + speed_px * 2.5 + 4                                   # as the rig bot
-        duck = False
-        DBG.append((round(now - t1, 2), nxt, round(lead), round(speed_px, 1), bool(held), jumps))
-        if nxt:
-            d = nxt[0]; bottom = nxt[3]; top = nxt[2]
-            if bottom < GROUND - 22: pass                    # high bird: run under
-            elif bottom < GROUND - 9:                        # mid bird: duck
-                duck = d < 60 + speed_px * 3 and nxt[1] > 20
-            elif d <= lead and not held and now - last > FR * 16:
-                big = GROUND - top > 19
-                n = max(1, (nxt[1] - nxt[0] + 4) // (12 if big else 8))
-                holdfor = FR * ((8 if big else 2) + 2 * n)
-                if top < GROUND - 30: holdfor = FR * 12        # low bird
-                down('space'); held = now; last = now; jumps += 1
-                if passed >= 2 and 'jump' not in saved:
-                    time.sleep(FR * 7); im2 = grab(f); q = px(im2)
-                    clouds = any(ink(q, X, Y) for X in range(40, 256) for Y in range(60, 100))
-                    if clouds and len(obstacles(q)) >= 1:
-                        im2.save(os.path.join(OUT, 'fuse_jump.png')); saved.add('jump'); print('jump shot')
-        if duck != ducking: (down if duck else up)('a'); ducking = duck
-        if 'bird' not in saved and any(g[3] < GROUND - 4 and g[1] - g[0] >= 16 and 100 < g[0] < 200 for g in gs):
-            im.save(os.path.join(OUT, 'fuse_bird.png')); saved.add('bird'); print('bird shot')
-        time.sleep(0.005)
-    if held: up('space')
-    if ducking: up('a')
-    if '-v' in sys.argv:
-        ch = [d for i, d in enumerate(DBG) if i == 0 or d[1:] != DBG[i - 1][1:]]
-        print('\n'.join(map(str, ch[-16:])))
-    DBG.clear()
-    time.sleep(FR * 150); im = grab(f)
-    im.save(os.path.join(OUT, 'fuse_gameover%d.png' % attempt))
-    print('attempt', attempt, 'jumps', jumps, 'obstacles passed', passed, 'seconds', round(time.time() - t1))
-    results.append(passed)
-    if {'jump', 'bird'} <= saved: break
-# restart: SPACE from the game over screen starts a new game (score back to 0)
-press('space', 10); time.sleep(FR * 60); im = grab(f); p = px(im)
-print('restart: GAME OVER gone', not game_over(p))
-im.save(os.path.join(OUT, 'fuse_restart.png'))
+time.sleep(30 * FR); im = grab(f); save(im, 'fuse_title.png')
+p = px(im); print('title shows no score:', not any(black(p, X, Y) for X in range(232, 252) for Y in range(48, 56)))
+saved = set(); results = []; DEBUG = os.environ.get('DEBUG'); LOG = []; RING = []
+for game in range(1, GAMES + 1):
+    press('space', 3)                # one short tap is enough (start, or restart)
+    time.sleep(FR * 25)
+    P = pilot.Pilot(); t1 = time.time(); jd = (False, False); last_air = 0
+    flash_seen = set(); night_seen = False
+    while time.time() - t1 < 1500:
+        now = time.time(); im = grab(f); p = px(im); ink = pilot.inkf(p)
+        if pilot.game_over(ink): break
+        j, d, nxt = P.step(p, (now - t1) / FR)
+        if DEBUG: RING.append(im); RING[:] = RING[-40:]
+        if DEBUG: LOG.append((round((now - t1) / FR, 1), nxt, pilot.dino_top(ink), round(P.v, 1), j, d))
+        if (j, d) != jd:
+            (down if j else up)('space'); (down if d else up)('a'); jd = (j, d)
+        night = p(0, 0)[0] < 100
+        if night and not night_seen: night_seen = True; print('  night at %.0f s' % (now - t1))
+        gs = pilot.obstacles(ink)
+        if j and pilot.dino_top(ink) < pilot.GROUND - 34 and gs and 'jump' not in saved and not night:
+            if any(ink(X, Y) for X in range(40, 256) for Y in range(60, 100)): save(im, 'fuse_jump.png'); saved.add('jump')
+        if 'bird' not in saved and any(g[3] < pilot.GROUND - 4 and g[1] - g[0] >= 16 and 90 < g[0] < 220 for g in gs):
+            save(im, 'fuse_bird.png'); saved.add('bird')
+        if night and 'night' not in saved and gs and any(ink(X, Y) for X in range(40, 256) for Y in range(58, 80)) and now - t1 > 0:
+            if pilot.obstacles(ink) and 60 < gs[0][0] < 200: save(im, 'fuse_night.png'); saved.add('night')
+        # the 100-point blink: the score digits (x 232-251, row 6) go blank while play goes on
+        dig = any(ink(X, Y) for X in range(232, 252) for Y in range(48, 56))
+        if not dig and P.passed > 3: flash_seen.add('off')
+        if dig and 'off' in flash_seen: flash_seen.add('on')
+        if not dig and 'flash' not in saved and P.passed > 3 and not night: save(im, 'fuse_flash_off.png'); saved.add('flash')
+        time.sleep(0.003)
+    up('space'); up('a')
+    if DEBUG:
+        gaps = [b[0] - a[0] for a, b in zip(LOG, LOG[1:])]
+        print('looks', len(LOG), 'mean gap %.2f frames, max %.1f' % (sum(gaps) / len(gaps), max(gaps)))
+        print('\n'.join(map(str, LOG[-12:]))); LOG.clear()
+        os.makedirs('/tmp/ring', exist_ok=True)
+        for i, r in enumerate(RING + [im]): r.save('/tmp/ring/%02d.png' % i)
+    time.sleep(FR * 150); im = grab(f); save(im, 'fuse_gameover%d.png' % game)
+    p = px(im); ink = pilot.inkf(p)
+    print('game %d: %.0f s, obstacles passed %d, speed %.1f px/step, night %s, blink seen %s, GAME OVER %s' % (
+        game, time.time() - t1, P.passed, P.v, night_seen, sorted(flash_seen), pilot.game_over(ink)))
+    results.append(P.passed)
+press('space', 1)                    # restart from a 1-frame tap
+time.sleep(FR * 40); p = px(grab(f)); print('restart from a 1-frame tap: GAME OVER gone', not pilot.game_over(pilot.inkf(p)))
+grab(f).save(os.path.join(OUT, 'fuse_restart.png'))
 f.close(); print('saved', sorted(saved), results)

@@ -11,3 +11,4 @@ __pycache__/
 *.ROM
 /tmp/
 .DS_Store
+extra.inc

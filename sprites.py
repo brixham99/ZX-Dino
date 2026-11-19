@@ -206,6 +206,59 @@ def ground():
         y = rnd.choice([3, 3, 4, 4, 5, 6]); x = rnd.randrange(W); n = rnd.choice([1, 1, 2, 2, 3, 4])
         for i in range(n): g[y][(x + i) % W] = '#'
     return [''.join(r) for r in g]
+
+def moon(i):
+    """Chrome's moon has 7 phases, one per night: crescents that thicken towards
+    the full moon (phase 3) and thin again, lit from the other side. 20 lines."""
+    R = 9.5; rows = []
+    full = i == 3; t = [3, 5, 7, 0, 7, 5, 3][i]; W = 20 if full else 12
+    for y in range(20):
+        r = ''
+        for x in range(W):
+            cx = 9.5 if full else (9.5 if i < 3 else 2.5)
+            dy = y - 9.5; inside = (x - cx) ** 2 + dy ** 2 <= R * R
+            if not full:
+                # cut by a second circle shifted by the crescent's thickness
+                sx = cx + (t if i < 3 else -t)
+                inside = inside and (x - sx) ** 2 + dy ** 2 > R * R and 0 <= x < 12
+            r += '#' if inside else '.'
+        rows.append(r)
+    # phases 4-6 are lit from the other side (the cut circle is on the left)
+    return rows
+STAR = """\
+..#..
+..#..
+##.##
+..#..
+..#..""".split('\n')
+def text_sprite(txt, font):
+    rows = []
+    for r in range(8):
+        line = ''
+        for ch in txt:
+            k = (ord(ch) - 32) >> 1; b = font[8 * k + r]
+            nib = (b >> 4) if ord(ch) % 2 == 0 else (b & 15)
+            line += format(nib, '04b').replace('1', '#').replace('0', '.')
+        rows.append(line)
+    return rows
+def speeds():
+    """the speed ramp, 8.8 pixels a step, by score / 32: 7.2 at 0 rising to 15.6
+    at 1655 (as phase 1's BASIC formula 1843 + score * 1.3), then level"""
+    return [1843 + min(i * 32, 1655) * 13 // 10 for i in range(53)]
+def extra(font):
+    L = ['; extra.inc - made by sprites.py: the night sky, GAME OVER, the speed ramp']
+    def spr(lab, rows):
+        wb, h, b = tobytes(rows)
+        L.append('%s:' % lab); L.append('        defb %d,%d' % (wb, h))
+        for i in range(0, len(b), 12): L.append('        defb ' + ','.join('$%02X' % v for v in b[i:i + 12]))
+    for i in range(7): spr('spr_moon%d' % i, moon(i))
+    L.append('moontab: defw ' + ','.join('spr_moon%d' % i for i in range(7)))
+    spr('spr_star', STAR)
+    spr('spr_gover', text_sprite('G A M E   O V E R', font))
+    L.append('spdtab:  ; ' + speeds.__doc__.strip().replace('\n', ' '))
+    sp = speeds()
+    for i in range(0, len(sp), 12): L.append('        defw ' + ','.join(map(str, sp[i:i + 12])))
+    return L
 def width(rows): return max(len(r) for r in rows)
 if __name__ == '__main__':
     lines = ['; sprites.inc - made by sprites.py: width in bytes, height, then the rows (MSB = left pixel)']
@@ -225,15 +278,25 @@ if __name__ == '__main__':
         k = (48 + d - 32) >> 1
         g = [(font[8 * k + r] & 0xF0) if d % 2 == 0 else ((font[8 * k + r] & 15) << 4) for r in range(8)]
         lines.append('        defb ' + ','.join('$%02X' % v for v in g))
+    lines.append('        defb 0,0,0,0,0,0,0,0   ; 10: blank (the score blink)')
     for n, r, _ in SPRITES:
         wb, h, _ = tobytes(r); lines.append('SZ_%s equ %d' % (n, (wb + 1) * h + 2))
     lines.append('H_CS equ %d\nH_CL equ %d\nH_PT equ %d' % (hs['cs'], hs['cl'], hs['pt1']))
     open(os.path.join(HERE, 'sprites.inc'), 'w').write('\n'.join(lines) + '\n')
+    open(os.path.join(HERE, 'extra.inc'), 'w').write('\n'.join(extra(font)) + '\n')
     from PIL import Image, ImageDraw
-    Z = 6; X = 4; Y = 4; im = Image.new('RGB', (900, 420), (255, 255, 255)); d = ImageDraw.Draw(im)
+    Z = 6; X = 4; Y = 4; im = Image.new('RGB', (900, 600), (255, 255, 255)); d = ImageDraw.Draw(im)
     for name, rows, m in SPRITES:
         w = width(rows)
         if X + w * Z > 890: X = 4; Y += 26 * Z
+        for y, r in enumerate(rows):
+            for x, ch in enumerate(r):
+                if ch == '#': d.rectangle([X + x * Z, Y + y * Z, X + x * Z + Z - 1, Y + y * Z + Z - 1], fill=(83, 83, 83))
+        X += w * Z + 14
+    X = 4; Y += 26 * Z
+    for rows in [moon(i) for i in range(7)] + [STAR, text_sprite('G A M E   O V E R', font)]:
+        w = width(rows)
+        if X + w * Z > 890: X = 4; Y += 22 * Z
         for y, r in enumerate(rows):
             for x, ch in enumerate(r):
                 if ch == '#': d.rectangle([X + x * Z, Y + y * Z, X + x * Z + Z - 1, Y + y * Z + Z - 1], fill=(83, 83, 83))

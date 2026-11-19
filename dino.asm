@@ -55,6 +55,315 @@ LEAD    equ 80              ; ask for the next obstacle 80 px before it is due
 IMTAB   equ $FE00           ; IM 2 table: 257 bytes of $FD, so the handler is
 IMJP    equ $FDFD           ;   entered at $FDFD (a JP to isr)
 
+;==============================================================================
+; Phase 2 block, 46900-47999 (below the entry points, which stay at 48000):
+; night mode, the score flash, the score drawn in step with the frame, the speed
+; ramp table, GAME OVER drawn over the scene, and the restart key wait.
+;==============================================================================
+        org 46900
+; ---- after each point: speed, the 100-point flash, the 700-point night --------
+scored: push hl             ; HL = the new score
+        ld a,l              ; speed = spdtab(min(score / 32, 52))
+        srl h
+        rra
+        srl h
+        rra
+        srl h
+        rra
+        srl h
+        rra
+        srl h
+        rra
+        ld e,a
+        ld a,h
+        or a
+        jr nz,sr_cap
+        ld a,e
+        cp 53
+        jr c,sr_ok
+sr_cap: ld a,52
+sr_ok:  add a,a
+        ld e,a
+        ld d,0
+        ld hl,spdtab
+        add hl,de
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        ld (speed),hl
+        pop hl
+        ld a,(flasht)       ; the digits for the next step (not mid-blink)
+        or a
+        jr nz,sr_nb
+        push hl
+        call drawval
+        pop hl
+        ld a,1
+        ld (sdirty),a
+sr_nb:  ld a,(hund)         ; every 100: the score blinks 3 times (Chrome's
+        inc a               ; achievement), showing the 100 it reached
+        cp 100
+        jr c,sr_h
+        ld (flashv),hl
+        ld a,36
+        ld (flasht),a
+        ld a,(flags)
+        or 16
+        ld (flags),a
+        xor a
+sr_h:   ld (hund),a
+        ld hl,(sev)         ; every 700: night falls for 12 seconds, unless
+        inc hl              ; one is still going on (as in Chrome)
+        ld (sev),hl
+        ld de,700
+        or a
+        sbc hl,de
+        ret nz
+        ld (sev),hl
+        ld hl,(ntime)
+        ld a,h
+        or l
+        ret nz
+        ld hl,300           ; 12 s of steps
+        ld (ntime),hl
+        ld a,3
+        ld (ntgt),a
+        ld a,1
+        ld (night),a
+        ld a,(mphase)       ; the next phase of the moon
+        inc a
+        cp 7
+        jr c,sr_m
+        xor a
+sr_m:   ld (mphase),a
+        ld hl,48+256-30     ; it rises at the right
+        ld (mx),hl
+        call rnd            ; two stars, one in each half, high up
+        and 127
+        ld l,a
+        ld h,0
+        ld de,48
+        add hl,de
+        ld (sx1),hl
+        call rnd
+        and 127
+        ld l,a
+        ld h,0
+        ld de,48+128
+        add hl,de
+        ld (sx2),hl
+        call rnd
+        and 15
+        add a,2
+        ld (sy1),a
+        call rnd
+        and 15
+        add a,8
+        ld (sy2),a
+        ret
+
+; ---- each update: the night's clock; the moon and stars drift left ------------
+ntick:  ld a,(fend)         ; a blink just ended: the digits of the score now
+        or a
+        jr z,nt_0
+        xor a
+        ld (fend),a
+        call drawscore
+        ld a,1
+        ld (sdirty),a
+nt_0:   ld hl,(ntime)
+        ld a,h
+        or l
+        jr z,nt_s
+        dec hl
+        ld (ntime),hl
+        ld a,h
+        or l
+        jr nz,nt_s
+        xor a               ; morning
+        ld (ntgt),a
+        ld (night),a
+nt_s:   ld a,(nlev)
+        or a
+        ret z
+        ld hl,mfrac
+        inc (hl)
+        ld a,(hl)
+        and 3
+        ret nz
+        ld hl,(mx)
+        dec hl
+        ld (mx),hl
+        ld hl,sx1
+        call nt_st
+        ld hl,sx2
+nt_st:  ld e,(hl)           ; a star off the left edge comes back on the right
+        inc hl
+        ld d,(hl)
+        dec de
+        ld a,e
+        cp 40
+        jr nc,nt_w
+        ld a,d
+        or a
+        jr nz,nt_w
+        ld de,48+256
+nt_w:   ld (hl),d
+        dec hl
+        ld (hl),e
+        ret
+
+; ---- each step: the fade between day and night (attributes) --------------------
+nfade:  ld a,(ntgt)
+        ld b,a
+        ld a,(nlev)
+        cp b
+        ret z
+        ld hl,nstep
+        inc (hl)
+        ld a,(hl)
+        cp 3
+        ret c
+        ld (hl),0
+        ld a,(nlev)
+        cp b
+        jr nc,nf_d
+        inc a
+        jr nf_s
+nf_d:   dec a
+nf_s:   ld (nlev),a
+        cp b
+        jr nz,setattr
+        ld a,(flags)        ; done: BASIC sets the border to match
+        or 32
+        ld (flags),a
+        ld a,b
+setattr: ld e,a             ; A = level 0-3: every attribute on the screen
+        ld d,0
+        ld hl,fadetab
+        add hl,de
+        ld a,(hl)
+        ld hl,$5800
+        ld (hl),a
+        ld de,$5801
+        ld bc,767
+        ldir
+        ret
+fadetab: defb $78,$38,$07,$47    ; black on bright white, on white (grey),
+                                 ; white on black, bright white on black
+
+; ---- the moon and stars, once it is dark enough ------------------------------
+drawsky: ld a,(nlev)
+        cp 2
+        ret c
+        ld a,(mphase)
+        add a,a
+        ld e,a
+        ld d,0
+        ld hl,moontab
+        add hl,de
+        ld a,(hl)
+        inc hl
+        ld h,(hl)
+        ld l,a
+        ld d,2
+        ld bc,(mx)
+        call spr_or
+        ld hl,spr_star
+        ld a,(sy1)
+        ld d,a
+        ld bc,(sx1)
+        call spr_or
+        ld hl,spr_star
+        ld a,(sy2)
+        ld d,a
+        ld bc,(sx2)
+        jp spr_or
+
+; ---- the score, first thing in a step (the beam is still in the border) -------
+scoreshow: ld a,(mode)
+        or a
+        ret z               ; none on the title screen, as in Chrome
+        ld a,(flasht)
+        or a
+        jr z,sh_n
+        dec a
+        ld (flasht),a
+        jr nz,sh_f
+        inc a               ; over: the next update draws the score
+        ld (fend),a
+        ret
+sh_f:   ld b,0              ; 6 steps (a quarter second) off, 6 on, 3 times
+sh_dv:  sub 6
+        jr c,sh_p
+        inc b
+        jr sh_dv
+sh_p:   bit 0,b
+        jp nz,blank
+        jp blit             ; (the bits still hold the 100 it reached)
+sh_n:   ld a,(sdirty)
+        or a
+        ret z
+        xor a
+        ld (sdirty),a
+        jp blit
+
+; ---- game over: the crash scene again, with GAME OVER and the restart icon ----
+; ORed over it, so the clouds stay whole
+dead:   xor a
+        ld (live),a
+        im 1
+        ld a,(ntgt)         ; finish any fade
+        ld (nlev),a
+        call setattr
+        call render
+        ld hl,spr_gover
+        ld d,16
+        ld bc,48+94
+        call spr_or
+        ld hl,spr_restart
+        ld d,30
+        ld bc,48+128-9
+        call spr_or
+        call showspans
+        call drawscore      ; the final score (even mid-blink)
+        jp blit
+
+; ---- restart: Chrome ignores keys for 0.75 s after a crash; then wait for the
+; keys to be let go, and catch a press however short (the ports, read flat out)
+waitkey: ei
+        ld b,37
+wk_d:   halt
+        djnz wk_d
+wk_r:   call wk_k
+        jr nz,wk_r
+wk_p:   call wk_k
+        jr z,wk_p
+        ret
+wk_k:   ld a,$7F            ; SPACE
+        in a,($FE)
+        cpl
+        and 1
+        ret nz
+        ld a,$FB            ; Q
+        in a,($FE)
+        cpl
+        and 1
+        ret nz
+        ld a,$EF            ; 7
+        in a,($FE)
+        cpl
+        and 8
+        ret
+
+mphase: defb 6              ; the moon's phase (the first night shows phase 0)
+        include "extra.inc"
+lowend:
+        if lowend > 48000
+        .error "the phase 2 block runs into 48000"
+        endif
+
         org 48000
         jp init             ; 48000
         jp step             ; 48003
@@ -73,6 +382,8 @@ rflags: defb 0              ; 48021  events since BASIC last cleared it (bits as
         jp golive           ; 48022  CALL: run the game from the frame interrupt
 live:   defb 0              ; 48025  1 while it runs from the interrupt
 crash:  defb 0              ; 48026  1 once the dino has hit something
+        jp waitkey          ; 48027  CALL: wait for a restart key (after 0.75 s)
+night:  defb 0              ; 48030  1 from nightfall to morning
 
 ; ---- state (zeroed by init) -------------------------------------------------
 st0:
@@ -94,6 +405,22 @@ cpx:    defb 0
 cgap:   defb 0              ; pixels (cloud speed) to the next cloud
 objs:   defs NOBJ*6         ; type, count, x lo, x hi, y, frame
 clouds: defs NCL*4          ; x lo, x hi, y (0 = free), spare
+sdirty: defb 0              ; the score needs drawing
+fend:   defb 0              ; the blink is over
+hund:   defb 0              ; points towards the next 100
+flasht: defb 0              ; steps of the 100-point blink left
+flashv: defw 0              ; the score it shows meanwhile
+sev:    defw 0              ; points towards the next 700
+ntime:  defw 0              ; steps of night left
+nlev:   defb 0              ; fade level 0 (day) - 3 (night)
+ntgt:   defb 0              ; the level it is heading for
+nstep:  defb 0
+mfrac:  defb 0
+mx:     defw 0              ; moon and stars: bit x, top line
+sx1:    defw 0
+sy1:    defb 0
+sx2:    defw 0
+sy2:    defb 0
 st1:
 lastf:  defb 0
 rng:    defb $5A
@@ -157,6 +484,7 @@ init:   call bldg
         ld (crash),a
         ld (rflags),a
         ld (live),a
+        ld (night),a
         ld hl,250
         ld (gapc),hl
         ld a,12
@@ -171,15 +499,21 @@ init:   call bldg
         call mkspans
         call render
         call showspans
-        jp drawscore
+        ld a,(mode)
+        or a
+        ret z               ; no score on the title screen
+        call drawscore
+        jp blit
 
 step:   call pace           ; A = updates due (1-4): one per 2 frames gone
 body:   ld (nup),a
+        call scoreshow      ; the score digits (row 6), before the beam gets there
         call showspans      ; first show what the last step drew: straight after
 shown:                            ; the interrupt the beam is still in the top border,
                             ; and the copy keeps ahead of it, so nothing tears
         xor a
         ld (flags),a
+        call nfade
         ld a,(mode)
         or a
         jr nz,st_u
@@ -208,24 +542,6 @@ st_end: ld a,(flags)
         ld c,a
         ld b,0
         ret
-
-dead:   xor a
-        ld (live),a
-        im 1
-        ld hl,SPT           ; show only the icon: the scene is on the screen
-        ld b,BH             ; already (and the buffer was cleared after it)
-        ld de,8
-dd_l:   ld (hl),255
-        inc hl
-        ld (hl),0
-        dec hl
-        add hl,de
-        djnz dd_l
-        ld hl,spr_restart
-        ld d,30
-        ld bc,48+128-9
-        call spr_or
-        jp showspans
 
 ; ---- run the game from the frame interrupt (IM 2) ---------------------------------
 ; BASIC then runs freely between steps: choosing an obstacle takes it several
@@ -440,7 +756,8 @@ ph_land: ld hl,0
         ret
 
 ; ---- move the world -----------------------------------------------------------
-world:  ld hl,(speed)
+world:  call ntick
+        ld hl,(speed)
         ld a,(dist)
         add a,l
         ld (dist),a
@@ -494,15 +811,7 @@ w_g:    ld hl,(gscr)
         or l
         jr z,w_c
         ld (score),hl
-        call drawscore
-        ld a,(dgt+3)
-        ld b,a
-        ld a,(dgt+4)
-        or b
-        jr nz,w_c
-        ld a,(flags)
-        or 16
-        ld (flags),a
+        call scored
         jr w_c
 w_s1:   ld (sdist),a
 w_c:    jp updclouds
@@ -798,7 +1107,8 @@ rd_ok:  ld hl,(dspr)
         ld a,(dy)
         ld bc,DINOBX
         call spr_pre
-        jp drawclouds       ; (shown at the start of the next step)
+        call drawclouds
+        jp drawsky          ; (all shown at the start of the next step)
 
 drawobjs: ld hl,objs
         ld b,NOBJ
@@ -1459,7 +1769,7 @@ clr_end: ret
 
 ; ---- the score, five digits at columns 58-62 of row 6, in the ROM's font -------
 drawscore: ld hl,(score)
-        ld de,dgt
+drawval: ld de,dgt
         ld bc,10000
         call dg_1
         ld bc,1000
@@ -1470,27 +1780,9 @@ drawscore: ld hl,(score)
         call dg_1
         ld a,l
         ld (de),a
+ds_go:  ld de,sbits         ; the 3 bytes x 8 lines of the five digits
         ld c,0              ; glyph line 0-7
-ds_l:   ld a,c
-        add a,48            ; screen line (row 6) -> DE at byte 29 (column 58)
-        ld e,a
-        and 7
-        or $40
-        ld d,a
-        ld a,e
-        rra
-        rra
-        rra
-        and $18
-        or d
-        ld d,a
-        ld a,e
-        rla
-        rla
-        and $E0
-        or 29
-        ld e,a
-        ld hl,dgt
+ds_l:   ld hl,dgt
         call ds_g
         ld b,a
         call ds_g
@@ -1500,7 +1792,7 @@ ds_l:   ld a,c
         rrca
         or b
         ld (de),a
-        inc e
+        inc de
         call ds_g
         ld b,a
         call ds_g
@@ -1510,14 +1802,50 @@ ds_l:   ld a,c
         rrca
         or b
         ld (de),a
-        inc e
+        inc de
         call ds_g
         ld (de),a
+        inc de
         inc c
         ld a,c
         cp 8
         jr nz,ds_l
         ret
+; copy them to the screen (row 6, columns 58-62): quick, so it can be done at
+; the start of a step, before the beam reaches row 6
+blit:   ld hl,sbits
+        ld de,$40DD
+        ld b,8
+bl_l:   ld a,(hl)
+        ld (de),a
+        inc hl
+        inc e
+        ld a,(hl)
+        ld (de),a
+        inc hl
+        inc e
+        ld a,(hl)
+        ld (de),a
+        inc hl
+        dec e
+        dec e
+        inc d
+        djnz bl_l
+        ret
+blank:  ld de,$40DD         ; the digits off (the 100-point blink)
+        ld b,8
+        xor a
+bk_l:   ld (de),a
+        inc e
+        ld (de),a
+        inc e
+        ld (de),a
+        dec e
+        dec e
+        inc d
+        djnz bk_l
+        ret
+sbits:  defs 24
 ds_g:   ld a,(hl)           ; line C of the glyph of digit (HL), HL++; top nibble
         inc hl
         push hl

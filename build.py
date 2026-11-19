@@ -3,8 +3,8 @@
 
 The tape holds what the OpticOS ROM itself writes: dino.bas is typed into
 the ROM in the OpticOS test rig (opticos-repo/tools/rig), the code is put
-at 48000, and the ROM's own  SAVE "dinorun" AUTO start  and
-SAVE "dinocode" CODE 48000,n  are recorded off the MIC signal and decoded
+at 46900, and the ROM's own  SAVE "dinorun" AUTO start  and
+SAVE "dinocode" CODE 46900,n  are recorded off the MIC signal and decoded
 into blocks, checking names, the OpticBASIC "OB" $01 $00 signature and the
 parity bytes.  Usage: python3 build.py   (needs pasmo, the OpticOS repo
 with build/opticos.rom and the rig's libz80.so)"""
@@ -12,7 +12,7 @@ import os, sys, struct, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.environ.get('OPTICOS', '/workspace/opticos-repo')   # a checkout of github.com/brixham99/OpticOS (built)
 PASMO = os.environ.get('PASMO', '/workspace/tools-prefix/usr/bin/pasmo')
-ORG = 48000
+ORG = 46900
 subprocess.run([sys.executable, os.path.join(HERE, 'sprites.py')], check=True, stdout=subprocess.DEVNULL)
 subprocess.run([PASMO, '--bin', 'dino.asm', 'dinocode.bin', 'dino.sym'], cwd=HERE, check=True)
 code = open(os.path.join(HERE, 'dinocode.bin'), 'rb').read()

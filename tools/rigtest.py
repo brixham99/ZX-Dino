@@ -16,7 +16,7 @@ lib.z_options(1, 1)          # ROM write-protect and memory contention, as on a 
 b.line('NEW'); b.line('CLS'); b.enter(prog)
 err = [r for r in b.screen() if r and r != ']']
 print('after entering:', err[-5:])
-s.load(48000, code)
+s.load(46900, code)
 try: b.line('RUN', 30_000_000)
 except TimeoutError: pass
 s.frame(100)
@@ -34,7 +34,7 @@ def objs():
     return o
 def score(): return s.dpeek(48014)
 WIDTH = {1: 8, 2: 12, 3: 23}
-LOG = []
+LOG = []; SEEN = set()
 def bot(frames, smart=True, shots=()):
     """play like a person: hold SPACE for a full jump when a cactus or low bird
     gets close, duck under a mid bird, run under a high one"""
@@ -51,6 +51,11 @@ def bot(frames, smart=True, shots=()):
                     continue
                 if 0 <= d <= spd * 2 + 4 and s.peek(SY['air']) == 0 and hold == 0:
                     hold = {1: 2 + 2 * n, 2: 8 + 2 * n, 3: 12}[t]      # short hops for small cacti
+        if s.peek(SY['nlev']) == 3 and s.peek(SY['ntime']) < 200 and objs() and not os.path.exists(os.path.join(OUT, 'night.png')):
+            s.image().save(os.path.join(OUT, 'night.png'))
+        if 0 < s.peek(SY['flasht']) < 30 and score() > 150 and not os.path.exists(os.path.join(OUT, 'flash_%d.png' % ((s.peek(SY['flasht']) // 6) & 1))):
+            s.image().save(os.path.join(OUT, 'flash_%d.png' % ((s.peek(SY['flasht']) // 6) & 1)))
+        if s.peek(SY['night']) and 'nightseen' not in SEEN: SEEN.add('nightseen'); print('night fell at score', score())
         if any(t == 3 and 70 < x < 140 for t, n, x, y in objs()) and not os.path.exists(os.path.join(OUT, 'bird.png')):
             s.image().save(os.path.join(OUT, 'bird.png'))
         LOG.append((f, [(t, n, x) for t, n, x, y in objs()], s.peek(SY['air']), round(s.dpeek(SY['hgt']) / 256), hold))
