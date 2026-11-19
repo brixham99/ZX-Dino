@@ -4,7 +4,7 @@ program the way the ROM does, run it, press keys by frame and save images.
 Usage: tools/rigtest.py [out_dir]"""
 import os, sys, time
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-REPO = os.environ.get('OPTICOS', '/workspace/opticos-repo')
+REPO = os.environ.get('OPTICOS', '/workspace/opticos-repo')   # a checkout of github.com/brixham99/OpticOS (built)
 sys.path.insert(0, os.path.join(REPO, 'tools', 'rig'))
 from p3lib import Basic, SYM
 OUT = sys.argv[1] if len(sys.argv) > 1 else '/tmp/dino_rig'; os.makedirs(OUT, exist_ok=True)

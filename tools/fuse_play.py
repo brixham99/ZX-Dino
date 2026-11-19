@@ -6,8 +6,8 @@ through xdotool, as a player would. The tape loads with the tape traps on.
 Usage: fuse_play.py [speed]   (shots go to ../shots)"""
 import sys, os, time
 HERE = os.path.dirname(os.path.abspath(__file__)); DR = os.path.dirname(HERE)
-os.environ.setdefault('OPTICOS_REPO', '/workspace/opticos-repo')
-sys.path.insert(0, '/workspace/happybat/tools')
+os.environ.setdefault('OPTICOS_REPO', os.environ.get('OPTICOS', '/workspace/opticos-repo'))
+sys.path.insert(0, os.environ.get('HAPPYBAT_TOOLS', '/workspace/happybat/tools'))   # Fuse helpers from the Happy Bat repo
 from fuse_common import *            # Fuse wrapper, grab, load, down/up (from Happy Bat)
 import fuse_phase1
 from paths import ROM

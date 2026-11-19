@@ -1,1 +1,13 @@
+# build outputs (python3 build.py remakes them; dino.tap / dino.tzx are kept)
+dino.sym
+dinocode.bin
+sprites.inc
+*.lst
+*.o
 __pycache__/
+*.pyc
+# never commit ROM images
+*.rom
+*.ROM
+/tmp/
+.DS_Store

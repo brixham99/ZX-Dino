@@ -10,7 +10,7 @@ parity bytes.  Usage: python3 build.py   (needs pasmo, the OpticOS repo
 with build/opticos.rom and the rig's libz80.so)"""
 import os, sys, struct, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.environ.get('OPTICOS', '/workspace/opticos-repo')
+REPO = os.environ.get('OPTICOS', '/workspace/opticos-repo')   # a checkout of github.com/brixham99/OpticOS (built)
 PASMO = os.environ.get('PASMO', '/workspace/tools-prefix/usr/bin/pasmo')
 ORG = 48000
 subprocess.run([sys.executable, os.path.join(HERE, 'sprites.py')], check=True, stdout=subprocess.DEVNULL)

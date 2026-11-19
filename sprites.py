@@ -219,7 +219,7 @@ if __name__ == '__main__':
         b = [int(r[i:i + 8].replace('#', '1').replace('.', '0'), 2) for i in range(0, 512, 8)]
         for i in range(0, 64, 16): lines.append('        defb ' + ','.join('$%02X' % v for v in b[i:i + 16]))
     hs = {n: len(r) for n, r, _ in SPRITES}
-    font = open('/workspace/opticos-repo/font/font4x8.bin', 'rb').read()   # OpticOS's own 4x8 font
+    font = open(os.path.join(os.environ.get('OPTICOS', '/workspace/opticos-repo'), 'font', 'font4x8.bin'), 'rb').read()   # OpticOS's own 4x8 font
     lines.append('digits:   ; 0-9 from the OpticOS font, 8 lines each, glyph in the top nibble')
     for d in range(10):
         k = (48 + d - 32) >> 1
